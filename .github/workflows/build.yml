@@ -1,0 +1,95 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  ART: build/StudioFrosTapeMachine_artefacts/Release
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux,   os: ubuntu-latest,  cmake_args: "" }
+          - { name: Windows, os: windows-latest, cmake_args: "" }
+          - { name: macOS,   os: macos-latest,   cmake_args: '"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15' }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libfreetype-dev \
+            libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DTAPE_INSTALL_AFTER_BUILD=OFF ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: DSP tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build-test -DCMAKE_BUILD_TYPE=Release -DTAPE_BUILD_TESTS=ON
+          cmake --build build-test --parallel 4
+          "$(find build-test -type f -name TapeEngineTest | head -n1)"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          tar -C "$ART/VST3" -czf dist/StudioFros-TapeMachine-Linux-VST3.tar.gz .
+          tar -C "$ART/Standalone" -czf dist/StudioFros-TapeMachine-Linux-Standalone.tar.gz .
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          codesign --force --deep -s - "$ART/VST3/StudioFros - Tape Machine.vst3"
+          codesign --force --deep -s - "$ART/Standalone/StudioFros - Tape Machine.app"
+          ditto -c -k --keepParent "$ART/VST3/StudioFros - Tape Machine.vst3" dist/StudioFros-TapeMachine-macOS-VST3.zip
+          ditto -c -k --keepParent "$ART/Standalone/StudioFros - Tape Machine.app" dist/StudioFros-TapeMachine-macOS-Standalone.zip
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$env:ART/VST3/*" -DestinationPath dist/StudioFros-TapeMachine-Windows-VST3.zip
+          Compress-Archive -Path "$env:ART/Standalone/*" -DestinationPath dist/StudioFros-TapeMachine-Windows-Standalone.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: StudioFros-TapeMachine-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
