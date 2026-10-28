@@ -1,0 +1,21 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+*.o
+*.so
+
+# JUCE checkout if you vendor it manually (remove this line if you add it as a submodule)
+/JUCE/
+
+# IDE
+.vscode/
+.idea/
+.vs/
+*.user
+CMakeUserPresets.json
+
+# OS
+.DS_Store
+Thumbs.db
